@@ -255,4 +255,112 @@ contract WellOfReflectionTest is Test {
         assertEq(afterFulfillment_fulfilled, true, "Request should be fulfilled");
         assertGt(afterFulfillment_randomWord, 0, "Random word should be set");
     }
+
+    ///@notice Test will override the random words to 1234567890
+    ///@notice and use the imprint 7890 because 1234567890 % 10000 = 7890
+    function test_receiveReflection() public {
+        // Set gas price for VRF price calculation (3 gwei)
+        vm.txGasPrice(0.00033 gwei);
+
+        address visitor = visitor1;
+        uint256 wellId = wellOfReflection.currentWellId();
+        uint256 imprint = 7890;
+        uint256 offeringAmount = wellOfReflection.OFFERING_AMOUNT();
+        uint256 beforeBalance = visitor.balance;
+        uint256 vrfFee = vrfV2PlusWrapper.calculateRequestPriceNative(100_000, 1);
+        uint256 totalAmount = offeringAmount + vrfFee;
+        uint256 beforeOfferingWellDepth = wellOfReflection.wellDepth(wellId);
+
+        assertEq(beforeOfferingWellDepth, 0, "Before offering, well depth should be equal to 0");
+
+        // --------------------- //
+        // --- Make Offering --- //
+        // --------------------- //
+
+        vm.recordLogs();
+        vm.startPrank(visitor);
+        wellOfReflection.makeOffering{value: totalAmount}(imprint);
+        vm.stopPrank();
+
+        // get request ID from event OfferingMade(wellId, visitorAddress, requestId);
+        Vm.Log[] memory eventLogs = vm.getRecordedLogs();
+
+        bytes32 offeringMadeEventSignature = keccak256("OfferingMade(uint256,address,uint256)");
+        bytes32 randomWordsRequestedEventSignature =
+            keccak256("RandomWordsRequested(bytes32,uint256,uint256,uint256,uint16,uint32,uint32,bytes,address)");
+        uint256 requestId;
+        uint256 coordinatorRequestId;
+        bool coordinatorRequestIdFound;
+
+        for (uint256 i = 0; i < eventLogs.length; i++) {
+            // Get the wrapper's request ID from OfferingMade event
+            if (
+                eventLogs[i].emitter == address(wellOfReflection)
+                    && eventLogs[i].topics[0] == offeringMadeEventSignature
+            ) {
+                (,, uint256 requestIdFromEvent) = abi.decode(eventLogs[i].data, (uint256, address, uint256));
+                requestId = requestIdFromEvent;
+            }
+
+            // Get the coordinator's request ID from RandomWordsRequested event
+            if (
+                eventLogs[i].emitter == address(vrfCoordinator)
+                    && eventLogs[i].topics[0] == randomWordsRequestedEventSignature
+            ) {
+                // Event: RandomWordsRequested(bytes32 indexed keyHash, uint256 requestId, uint256 preSeed, ...)
+                // requestId is NOT indexed, so it's in the data
+                // requestId is the first parameter in data, so we can read it directly (first 32 bytes)
+                assertGe(eventLogs[i].data.length, 32);
+                coordinatorRequestId = uint256(bytes32(eventLogs[i].data));
+
+                console.log("coordinatorRequestId", coordinatorRequestId);
+                coordinatorRequestIdFound = true;
+            }
+        }
+
+        uint256 afterOfferingWellDepth = wellOfReflection.wellDepth(wellId);
+
+        assertTrue(coordinatorRequestIdFound, "Coordinator request ID not found in events");
+        assertGt(coordinatorRequestId, 0, "Coordinator request ID should be non-zero");
+        assertEq(
+            afterOfferingWellDepth, offeringAmount, "After offering, well depth should be equal to offering amount"
+        );
+
+        // ---------------------------- //
+        // --- Fulfill Random Words --- //
+        // ---------------------------- //
+
+        // Override the random words to 1234567890
+        uint256[] memory randomWords = new uint256[](1);
+        randomWords[0] = 1234567890;
+        vrfCoordinator.fulfillRandomWordsWithOverride(coordinatorRequestId, address(vrfV2PlusWrapper), randomWords);
+
+        // ------------------------- //
+        // --- After Fulfillment --- //
+        // ------------------------- //
+
+        // check if words were fulfilled
+        (, bool afterFulfillment_fulfilled, uint256 afterFulfillment_randomWord) = wellOfReflection.requests(requestId);
+
+        console.log("afterFulfillment_randomWord", afterFulfillment_randomWord);
+
+        assertEq(afterFulfillment_fulfilled, true, "Request should be fulfilled");
+        assertEq(afterFulfillment_randomWord, 1234567890, "Random word should be set to 1234567890");
+
+        // -------------------------- //
+        // --- Receive Reflection --- //
+        // -------------------------- //
+
+        // Receive the reflection
+        vm.startPrank(visitor);
+        wellOfReflection.receiveReflection();
+        vm.stopPrank();
+
+        // check if reflection was received
+        assertEq(visitor.balance, beforeBalance - totalAmount + afterOfferingWellDepth);
+        assertEq(wellOfReflection.wellDepth(wellId), 0);
+        assertEq(wellOfReflection.attainableReflections(visitor), 0);
+        assertEq(wellOfReflection.currentWellId(), 1);
+        assertEq(wellOfReflection.wellIsReadyToReceive(), true);
+    }
 }
