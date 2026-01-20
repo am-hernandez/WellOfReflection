@@ -43,6 +43,8 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     //                                   EVENTS
     //=========================================================================-
 
+    event ReflectionReceived(address indexed recipient, uint256 amount);
+
     event RequestSent(uint256 indexed requestId, uint256 indexed wellId, address indexed visitor);
 
     event RequestFulfilled(
@@ -60,9 +62,11 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     // =========================================================================
 
     error AlreadyOffered();
+    error EthTransferFailed();
     error FailedToCompleteOffering();
     error InvalidOfferingPlusFeeAmount();
     error WellIsNotReadyToReceive();
+    error NothingToReceive();
 
     // =========================================================================
     //                                CONSTRUCTOR
@@ -123,11 +127,16 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     //                             INTERNAL FUNCTIONS
     // =========================================================================
 
-    function _finalizeReturn(address _recipient) internal {
-        // transfer ETH to the _recipient, reset state, etc.
-        uint256 reflectionAmount = attainableReflections[_recipient];
-        attainableReflections[_recipient] = 0;
-        payable(_recipient).transfer(reflectionAmount);
+    function _finalizeReturn(address payable recipient) internal {
+        uint256 amount = attainableReflections[recipient];
+        if (amount == 0) revert NothingToReceive();
+
+        attainableReflections[recipient] = 0;
+
+        (bool ok,) = recipient.call{value: amount}("");
+        if (!ok) revert EthTransferFailed();
+
+        emit ReflectionReceived(recipient, amount);
     }
 
     function _onlyWhenWellIsReadyToReceive() internal view {
