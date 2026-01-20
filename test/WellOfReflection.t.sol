@@ -82,6 +82,66 @@ contract WellOfReflectionTest is Test {
         vm.deal(visitor3, ethAmount);
     }
 
+    struct OfferingLogs {
+        uint256 wellId;
+        address visitor;
+        uint256 requestId;
+        uint256 coordinatorRequestId;
+    }
+
+    // =========================================================================
+    //                               Helper Functions
+    // =========================================================================
+
+    /**
+     * @notice Helper function to make an offering and parse the logs
+     * @param visitor The address making the offering
+     * @param imprint The imprint value to use
+     * @param totalAmount The total amount to send (offeringAmount + vrfFee)
+     * @return logs Struct containing wellId, visitor, requestId, and coordinatorRequestId
+     */
+    function makeOfferingAndParseLogs(address visitor, uint256 imprint, uint256 totalAmount)
+        internal
+        returns (OfferingLogs memory logs)
+    {
+        vm.recordLogs();
+        vm.startPrank(visitor);
+        wellOfReflection.makeOffering{value: totalAmount}(imprint);
+        vm.stopPrank();
+
+        Vm.Log[] memory eventLogs = vm.getRecordedLogs();
+
+        bytes32 requestSentEventSignature = keccak256("RequestSent(uint256,uint256,address)");
+        bytes32 randomWordsRequestedEventSignature =
+            keccak256("RandomWordsRequested(bytes32,uint256,uint256,uint256,uint16,uint32,uint32,bytes,address)");
+
+        for (uint256 i = 0; i < eventLogs.length; i++) {
+            // Extract data from RequestSent event emitted by WellOfReflection
+            // Event: RequestSent(uint256 indexed requestId, uint256 indexed wellId, address indexed visitor)
+            // The requestId here is the wrapper's request ID (returned from requestRandomnessPayInNative)
+            if (
+                eventLogs[i].emitter == address(wellOfReflection) && eventLogs[i].topics[0] == requestSentEventSignature
+            ) {
+                // topics[1] = requestId, topics[2] = wellId, topics[3] = visitor
+                logs.requestId = uint256(eventLogs[i].topics[1]);
+                logs.wellId = uint256(eventLogs[i].topics[2]);
+                logs.visitor = address(uint160(uint256(eventLogs[i].topics[3])));
+            }
+
+            // Get the coordinator's request ID from RandomWordsRequested event
+            if (
+                eventLogs[i].emitter == address(vrfCoordinator)
+                    && eventLogs[i].topics[0] == randomWordsRequestedEventSignature
+            ) {
+                // Event: RandomWordsRequested(bytes32 indexed keyHash, uint256 requestId, uint256 preSeed, ...)
+                (uint256 coordinatorRequestId) = abi.decode(eventLogs[i].data, (uint256));
+                logs.coordinatorRequestId = coordinatorRequestId;
+            }
+        }
+
+        return logs;
+    }
+
     function test_makeOffering() public {
         // Set gas price for VRF price calculation
         vm.txGasPrice(0.00033 gwei);
@@ -101,41 +161,14 @@ contract WellOfReflectionTest is Test {
         assertEq(wellOfReflection.wellDepth(wellId), 0);
 
         // make offering (visitor pays offeringAmount + vrfFee)
-        vm.recordLogs();
-        vm.startPrank(visitor1);
-        wellOfReflection.makeOffering{value: totalAmount}(1);
-        vm.stopPrank();
-
-        // Expecting the OfferingMade event
-        Vm.Log[] memory entries = vm.getRecordedLogs();
-        bytes32 eventSignature = keccak256("OfferingMade(uint256,address,uint256)");
-        bool eventFound;
-        uint256 requestIdFromEvent;
-
-        for (uint256 i = 0; i < entries.length; i++) {
-            if (entries[i].emitter == address(wellOfReflection) && entries[i].topics[0] == eventSignature) {
-                eventFound = true;
-
-                (uint256 wellIdFromEvent, address visitorFromEvent, uint256 requestId) =
-                    abi.decode(entries[i].data, (uint256, address, uint256));
-
-                assertEq(wellIdFromEvent, wellId);
-                assertEq(visitorFromEvent, visitor1);
-                // requestId is non-zero (VRF request was made)
-                assertGt(requestId, 0);
-                requestIdFromEvent = requestId;
-                break;
-            }
-        }
-        assertTrue(eventFound, "OfferingMade event not found");
+        OfferingLogs memory logs = makeOfferingAndParseLogs(visitor1, 1, totalAmount);
 
         // After the offering
         assertEq(wellOfReflection.hasOffered(key), true);
         assertEq(wellOfReflection.wellDepth(wellId), offeringAmount);
 
         // Get the VRF cost that was paid
-        (uint256 vrfFeePaidByVisitor, bool fulfilled, uint256 randomWord) =
-            wellOfReflection.requests(requestIdFromEvent);
+        (uint256 vrfFeePaidByVisitor, bool fulfilled, uint256 randomWord) = wellOfReflection.requests(logs.requestId);
 
         uint256 vrfCost = vrfFeePaidByVisitor;
         assertEq(vrfCost, vrfFee);
@@ -143,7 +176,8 @@ contract WellOfReflectionTest is Test {
         assertEq(randomWord, 0);
 
         uint256 contractBalanceAfter = address(wellOfReflection).balance;
-        uint256 expectedBalance = offeringAmount; // VRF fee is paid from the fee portion, offering remains
+        // VRF fee is paid from the fee portion, offering remains in the contract
+        uint256 expectedBalance = offeringAmount;
 
         // Balance should equal offering amount (VRF fee was deducted from the fee portion)
         assertEq(contractBalanceAfter, expectedBalance, "Contract balance should equal offering amount");
@@ -168,56 +202,14 @@ contract WellOfReflectionTest is Test {
         // --- Make Offering --- //
         // --------------------- //
 
-        vm.recordLogs();
-        vm.startPrank(visitor);
-        wellOfReflection.makeOffering{value: totalAmount}(1);
-        vm.stopPrank();
-
-        // get request ID from event OfferingMade(wellId, visitorAddress, requestId);
-        Vm.Log[] memory eventLogs = vm.getRecordedLogs();
-
-        bytes32 offeringMadeEventSignature = keccak256("OfferingMade(uint256,address,uint256)");
-        bytes32 randomWordsRequestedEventSignature =
-            keccak256("RandomWordsRequested(bytes32,uint256,uint256,uint256,uint16,uint32,uint32,bytes,address)");
-        uint256 requestId;
-        uint256 coordinatorRequestId;
-        bool coordinatorRequestIdFound;
-
-        for (uint256 i = 0; i < eventLogs.length; i++) {
-            // Get the wrapper's request ID from OfferingMade event
-            if (
-                eventLogs[i].emitter == address(wellOfReflection)
-                    && eventLogs[i].topics[0] == offeringMadeEventSignature
-            ) {
-                (,, uint256 requestIdFromEvent) = abi.decode(eventLogs[i].data, (uint256, address, uint256));
-                requestId = requestIdFromEvent;
-            }
-
-            // Get the coordinator's request ID from RandomWordsRequested event
-            if (
-                eventLogs[i].emitter == address(vrfCoordinator)
-                    && eventLogs[i].topics[0] == randomWordsRequestedEventSignature
-            ) {
-                // Event: RandomWordsRequested(bytes32 indexed keyHash, uint256 requestId, uint256 preSeed, ...)
-                // requestId is NOT indexed, so it's in the data
-                // requestId is the first parameter in data, so we can read it directly (first 32 bytes)
-                assertGe(eventLogs[i].data.length, 32);
-                coordinatorRequestId = uint256(bytes32(eventLogs[i].data));
-
-                console.log("coordinatorRequestId", coordinatorRequestId);
-                coordinatorRequestIdFound = true;
-            }
-        }
-
-        assertTrue(coordinatorRequestIdFound, "Coordinator request ID not found in events");
-        assertGt(coordinatorRequestId, 0, "Coordinator request ID should be non-zero");
+        OfferingLogs memory logs = makeOfferingAndParseLogs(visitor, 1, totalAmount);
 
         // -------------------------- //
         // --- Before Fulfillment --- //
         // -------------------------- //
 
         // Verify the request was stored
-        (uint256 vrfFeePaidByVisitor, bool fulfilled, uint256 randomWord) = wellOfReflection.requests(requestId);
+        (uint256 vrfFeePaidByVisitor, bool fulfilled, uint256 randomWord) = wellOfReflection.requests(logs.requestId);
 
         // vrfCost should be greater than 0
         assertGt(vrfFeePaidByVisitor, 0, "VRF request should have been paid");
@@ -245,10 +237,11 @@ contract WellOfReflectionTest is Test {
 
         // Fulfill the VRF request through the coordinator
         // The coordinator will call the wrapper, which will call WellOfReflection
-        vrfCoordinator.fulfillRandomWords(coordinatorRequestId, address(vrfV2PlusWrapper));
+        vrfCoordinator.fulfillRandomWords(logs.coordinatorRequestId, address(vrfV2PlusWrapper));
 
         // check if words were fulfilled
-        (, bool afterFulfillment_fulfilled, uint256 afterFulfillment_randomWord) = wellOfReflection.requests(requestId);
+        (, bool afterFulfillment_fulfilled, uint256 afterFulfillment_randomWord) =
+            wellOfReflection.requests(logs.requestId);
 
         console.log("afterFulfillment_randomWord", afterFulfillment_randomWord);
 
@@ -277,51 +270,9 @@ contract WellOfReflectionTest is Test {
         // --- Make Offering --- //
         // --------------------- //
 
-        vm.recordLogs();
-        vm.startPrank(visitor);
-        wellOfReflection.makeOffering{value: totalAmount}(imprint);
-        vm.stopPrank();
-
-        // get request ID from event OfferingMade(wellId, visitorAddress, requestId);
-        Vm.Log[] memory eventLogs = vm.getRecordedLogs();
-
-        bytes32 offeringMadeEventSignature = keccak256("OfferingMade(uint256,address,uint256)");
-        bytes32 randomWordsRequestedEventSignature =
-            keccak256("RandomWordsRequested(bytes32,uint256,uint256,uint256,uint16,uint32,uint32,bytes,address)");
-        uint256 requestId;
-        uint256 coordinatorRequestId;
-        bool coordinatorRequestIdFound;
-
-        for (uint256 i = 0; i < eventLogs.length; i++) {
-            // Get the wrapper's request ID from OfferingMade event
-            if (
-                eventLogs[i].emitter == address(wellOfReflection)
-                    && eventLogs[i].topics[0] == offeringMadeEventSignature
-            ) {
-                (,, uint256 requestIdFromEvent) = abi.decode(eventLogs[i].data, (uint256, address, uint256));
-                requestId = requestIdFromEvent;
-            }
-
-            // Get the coordinator's request ID from RandomWordsRequested event
-            if (
-                eventLogs[i].emitter == address(vrfCoordinator)
-                    && eventLogs[i].topics[0] == randomWordsRequestedEventSignature
-            ) {
-                // Event: RandomWordsRequested(bytes32 indexed keyHash, uint256 requestId, uint256 preSeed, ...)
-                // requestId is NOT indexed, so it's in the data
-                // requestId is the first parameter in data, so we can read it directly (first 32 bytes)
-                assertGe(eventLogs[i].data.length, 32);
-                coordinatorRequestId = uint256(bytes32(eventLogs[i].data));
-
-                console.log("coordinatorRequestId", coordinatorRequestId);
-                coordinatorRequestIdFound = true;
-            }
-        }
+        OfferingLogs memory logs = makeOfferingAndParseLogs(visitor, imprint, totalAmount);
 
         uint256 afterOfferingWellDepth = wellOfReflection.wellDepth(wellId);
-
-        assertTrue(coordinatorRequestIdFound, "Coordinator request ID not found in events");
-        assertGt(coordinatorRequestId, 0, "Coordinator request ID should be non-zero");
         assertEq(
             afterOfferingWellDepth, offeringAmount, "After offering, well depth should be equal to offering amount"
         );
@@ -333,14 +284,15 @@ contract WellOfReflectionTest is Test {
         // Override the random words to 1234567890
         uint256[] memory randomWords = new uint256[](1);
         randomWords[0] = 1234567890;
-        vrfCoordinator.fulfillRandomWordsWithOverride(coordinatorRequestId, address(vrfV2PlusWrapper), randomWords);
+        vrfCoordinator.fulfillRandomWordsWithOverride(logs.coordinatorRequestId, address(vrfV2PlusWrapper), randomWords);
 
         // ------------------------- //
         // --- After Fulfillment --- //
         // ------------------------- //
 
         // check if words were fulfilled
-        (, bool afterFulfillment_fulfilled, uint256 afterFulfillment_randomWord) = wellOfReflection.requests(requestId);
+        (, bool afterFulfillment_fulfilled, uint256 afterFulfillment_randomWord) =
+            wellOfReflection.requests(logs.requestId);
 
         console.log("afterFulfillment_randomWord", afterFulfillment_randomWord);
 
