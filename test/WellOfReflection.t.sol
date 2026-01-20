@@ -2,19 +2,17 @@
 
 pragma solidity 0.8.19;
 
-import {IERC20} from "@forge-std/interfaces/IERC20.sol";
-import {Test} from "@forge-std/Test.sol";
-import {WellOfReflection} from "../src/WellOfReflection.sol";
 import {console} from "@forge-std/console.sol";
+import {Test} from "@forge-std/Test.sol";
 import {Vm} from "@forge-std/Vm.sol";
 import {MockLinkToken} from "@chainlink/mocks/MockLinkToken.sol";
 import {MockV3Aggregator} from "@chainlink/tests/MockV3Aggregator.sol";
 import {VRFCoordinatorV2_5Mock} from "@chainlink/vrf/mocks/VRFCoordinatorV2_5Mock.sol";
 import {VRFV2PlusWrapper} from "@chainlink/vrf/dev/VRFV2PlusWrapper.sol";
+import {WellOfReflection} from "../src/WellOfReflection.sol";
 
 contract WellOfReflectionTest is Test {
     WellOfReflection public wellOfReflection;
-    MockUSDC public usdc;
     MockLinkToken public linkToken;
     MockV3Aggregator public linkNativeFeed;
     VRFCoordinatorV2_5Mock public vrfCoordinator;
@@ -72,7 +70,6 @@ contract WellOfReflectionTest is Test {
         vrfCoordinator.fundSubscriptionWithNative{value: 10 ether}(wrapperSubscriptionId);
 
         // Deploy WellOfReflection with the wrapper
-        // usdc = new MockUSDC();
         wellOfReflection = new WellOfReflection(address(vrfV2PlusWrapper));
 
         visitor1 = makeAddr("visitor1");
@@ -257,52 +254,5 @@ contract WellOfReflectionTest is Test {
 
         assertEq(afterFulfillment_fulfilled, true, "Request should be fulfilled");
         assertGt(afterFulfillment_randomWord, 0, "Random word should be set");
-    }
-}
-
-contract MockUSDC is IERC20 {
-    mapping(address => uint256) public balances;
-    mapping(address => mapping(address => uint256)) public allowances;
-
-    function totalSupply() external pure returns (uint256) {
-        return 1000000000000000000000000000;
-    }
-
-    function balanceOf(address account) external view returns (uint256) {
-        return balances[account];
-    }
-
-    function allowance(address owner, address spender) external view returns (uint256) {
-        return allowances[owner][spender];
-    }
-
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        balances[from] -= amount;
-        balances[to] += amount;
-        allowances[from][msg.sender] -= amount;
-        return true;
-    }
-
-    function approve(address spender, uint256 amount) external returns (bool) {
-        allowances[msg.sender][spender] = amount;
-        return true;
-    }
-
-    function transfer(address to, uint256 amount) external returns (bool) {
-        balances[msg.sender] -= amount;
-        balances[to] += amount;
-        return true;
-    }
-
-    function name() external pure returns (string memory) {
-        return "Mock USDC";
-    }
-
-    function symbol() external pure returns (string memory) {
-        return "mUSDC";
-    }
-
-    function decimals() external pure returns (uint8) {
-        return 6;
     }
 }
