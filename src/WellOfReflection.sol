@@ -39,9 +39,9 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
         uint256 randomWord;
     }
 
-    //=========================================================================-
+    //==========================================================================
     //                                   EVENTS
-    //=========================================================================-
+    //==========================================================================
 
     event ReflectionReceived(address indexed recipient, uint256 amount);
 
@@ -120,7 +120,7 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
      * the accumulated pool to the caller.
      */
     function receiveReflection() external {
-        _finalizeReturn(msg.sender);
+        _finalizeReturn(payable(msg.sender));
     }
 
     // =========================================================================
