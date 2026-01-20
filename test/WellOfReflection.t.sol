@@ -69,6 +69,9 @@ contract WellOfReflectionTest is Test {
         vm.deal(address(this), 100 ether);
         vrfCoordinator.fundSubscriptionWithNative{value: 10 ether}(wrapperSubscriptionId);
 
+        // Set gas price for VRF price calculation (0.00033 gwei)
+        vm.txGasPrice(0.00033 gwei);
+
         // Deploy WellOfReflection with the wrapper
         wellOfReflection = new WellOfReflection(address(vrfV2PlusWrapper));
 
@@ -143,9 +146,6 @@ contract WellOfReflectionTest is Test {
     }
 
     function test_makeOffering() public {
-        // Set gas price for VRF price calculation
-        vm.txGasPrice(0.00033 gwei);
-
         uint256 wellId = wellOfReflection.currentWellId();
         uint256 offeringAmount = wellOfReflection.OFFERING_AMOUNT();
         bytes32 key = keccak256(abi.encodePacked(wellId, visitor1));
@@ -186,9 +186,6 @@ contract WellOfReflectionTest is Test {
     }
 
     function test_fulfillRandomWords() public {
-        // Set gas price for VRF price calculation (3 gwei)
-        vm.txGasPrice(0.00033 gwei);
-
         address visitor = visitor1;
         uint256 wellId = wellOfReflection.currentWellId();
         uint256 offeringAmount = wellOfReflection.OFFERING_AMOUNT();
