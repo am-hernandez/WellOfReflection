@@ -153,6 +153,111 @@ contract WellOfReflectionTest is Test {
         assertEq(visitor1.balance, ethAmount - totalAmount);
         assertEq(wellOfReflection.currentWellId(), 0);
     }
+
+    function test_fulfillRandomWords() public {
+        // Set gas price for VRF price calculation (3 gwei)
+        vm.txGasPrice(0.00033 gwei);
+
+        address visitor = visitor1;
+        uint256 wellId = wellOfReflection.currentWellId();
+        uint256 offeringAmount = wellOfReflection.OFFERING_AMOUNT();
+        uint256 beforeBalance = visitor.balance;
+
+        // Calculate VRF fee that visitor needs to pay
+        uint256 vrfFee = vrfV2PlusWrapper.calculateRequestPriceNative(100_000, 1);
+        uint256 totalAmount = offeringAmount + vrfFee;
+
+        // --------------------- //
+        // --- Make Offering --- //
+        // --------------------- //
+
+        vm.recordLogs();
+        vm.startPrank(visitor);
+        wellOfReflection.makeOffering{value: totalAmount}();
+        vm.stopPrank();
+
+        // get request ID from event OfferingMade(wellId, visitorAddress, requestId);
+        Vm.Log[] memory eventLogs = vm.getRecordedLogs();
+
+        bytes32 offeringMadeEventSignature = keccak256("OfferingMade(uint256,address,uint256)");
+        bytes32 randomWordsRequestedEventSignature =
+            keccak256("RandomWordsRequested(bytes32,uint256,uint256,uint256,uint16,uint32,uint32,bytes,address)");
+        uint256 requestId;
+        uint256 coordinatorRequestId;
+        bool coordinatorRequestIdFound;
+
+        for (uint256 i = 0; i < eventLogs.length; i++) {
+            // Get the wrapper's request ID from OfferingMade event
+            if (
+                eventLogs[i].emitter == address(wellOfReflection)
+                    && eventLogs[i].topics[0] == offeringMadeEventSignature
+            ) {
+                (,, uint256 requestIdFromEvent) = abi.decode(eventLogs[i].data, (uint256, address, uint256));
+                requestId = requestIdFromEvent;
+            }
+
+            // Get the coordinator's request ID from RandomWordsRequested event
+            if (
+                eventLogs[i].emitter == address(vrfCoordinator)
+                    && eventLogs[i].topics[0] == randomWordsRequestedEventSignature
+            ) {
+                // Event: RandomWordsRequested(bytes32 indexed keyHash, uint256 requestId, uint256 preSeed, ...)
+                // requestId is NOT indexed, so it's in the data
+                // requestId is the first parameter in data, so we can read it directly (first 32 bytes)
+                assertGe(eventLogs[i].data.length, 32);
+                coordinatorRequestId = uint256(bytes32(eventLogs[i].data));
+
+                console.log("coordinatorRequestId", coordinatorRequestId);
+                coordinatorRequestIdFound = true;
+            }
+        }
+
+        assertTrue(coordinatorRequestIdFound, "Coordinator request ID not found in events");
+        assertGt(coordinatorRequestId, 0, "Coordinator request ID should be non-zero");
+
+        // -------------------------- //
+        // --- Before Fulfillment --- //
+        // -------------------------- //
+
+        // Verify the request was stored
+        (uint256 vrfFeePaidByVisitor, bool fulfilled, uint256 randomWord) = wellOfReflection.requests(requestId);
+
+        // vrfCost should be greater than 0
+        assertGt(vrfFeePaidByVisitor, 0, "VRF request should have been paid");
+        assertEq(fulfilled, false, "Request should not be fulfilled yet");
+        assertEq(randomWord, 0, "Random word should not be set yet");
+
+        // Visitor pays offeringAmount + vrfFee
+        assertEq(visitor.balance, beforeBalance - totalAmount);
+
+        // Verify the well depth has increased by offeringAmount
+        assertEq(wellOfReflection.wellDepth(0), offeringAmount);
+
+        // Verify the well is still paused
+        assertEq(wellOfReflection.wellIsReadyToReceive(), false, "Well should be paused after offering");
+
+        // Verify the current well ID is still 0
+        assertEq(wellOfReflection.currentWellId(), 0);
+
+        // Verify the offering was stored
+        assertEq(wellOfReflection.hasOffered(keccak256(abi.encodePacked(wellId, visitor))), true);
+
+        // ------------------------- //
+        // --- After Fulfillment --- //
+        // ------------------------- //
+
+        // Fulfill the VRF request through the coordinator
+        // The coordinator will call the wrapper, which will call WellOfReflection
+        vrfCoordinator.fulfillRandomWords(coordinatorRequestId, address(vrfV2PlusWrapper));
+
+        // check if words were fulfilled
+        (, bool afterFulfillment_fulfilled, uint256 afterFulfillment_randomWord) = wellOfReflection.requests(requestId);
+
+        console.log("afterFulfillment_randomWord", afterFulfillment_randomWord);
+
+        assertEq(afterFulfillment_fulfilled, true, "Request should be fulfilled");
+        assertGt(afterFulfillment_randomWord, 0, "Random word should be set");
+    }
 }
 
 contract MockUSDC is IERC20 {
