@@ -9,7 +9,7 @@ import {console} from "@forge-std/console.sol";
 import {Vm} from "@forge-std/Vm.sol";
 import {MockLinkToken} from "@chainlink/mocks/MockLinkToken.sol";
 import {MockV3Aggregator} from "@chainlink/tests/MockV3Aggregator.sol";
-import {ExposedVRFCoordinatorV2_5} from "@chainlink/vrf/dev/testhelpers/ExposedVRFCoordinatorV2_5.sol";
+import {VRFCoordinatorV2_5Mock} from "@chainlink/vrf/mocks/VRFCoordinatorV2_5Mock.sol";
 import {VRFV2PlusWrapper} from "@chainlink/vrf/dev/VRFV2PlusWrapper.sol";
 
 contract WellOfReflectionTest is Test {
@@ -17,7 +17,7 @@ contract WellOfReflectionTest is Test {
     MockUSDC public usdc;
     MockLinkToken public linkToken;
     MockV3Aggregator public linkNativeFeed;
-    ExposedVRFCoordinatorV2_5 public vrfCoordinator;
+    VRFCoordinatorV2_5Mock public vrfCoordinator;
     VRFV2PlusWrapper public vrfV2PlusWrapper;
     uint256 public wrapperSubscriptionId;
     uint256 public ethAmount = 1 ether;
@@ -32,35 +32,24 @@ contract WellOfReflectionTest is Test {
     uint32 private constant COORDINATOR_GAS_OVERHEAD_LINK = 220_000;
 
     function setUp() public {
-        // Deploy mock LINK token and LINK/Native feed
-        // linkToken = new MockLinkToken();
-        // linkNativeFeed = new MockV3Aggregator(18, 500000000000000000); // 0.5 ETH per LINK
+        // Deploy mock LINK token and feed (needed by wrapper)
+        linkToken = new MockLinkToken();
+        linkNativeFeed = new MockV3Aggregator(18, 500000000000000000); // 0.5 ETH per LINK
 
-        // Deploy VRF Coordinator
-        vrfCoordinator = new ExposedVRFCoordinatorV2_5(address(0));
+        // Deploy VRF Coordinator Mock
+        // Parameters: baseFee, gasPrice, weiPerUnitLink
+        vrfCoordinator = new VRFCoordinatorV2_5Mock(0, 0, 50000000000000000);
 
         // Create subscription for wrapper
         wrapperSubscriptionId = vrfCoordinator.createSubscription();
 
         // Deploy VRF V2 Plus Wrapper
-        vrfV2PlusWrapper = new VRFV2PlusWrapper(address(0), address(0), address(vrfCoordinator), wrapperSubscriptionId);
+        vrfV2PlusWrapper = new VRFV2PlusWrapper(
+            address(linkToken), address(linkNativeFeed), address(vrfCoordinator), wrapperSubscriptionId
+        );
 
         // Add wrapper as consumer to subscription
         vrfCoordinator.addConsumer(wrapperSubscriptionId, address(vrfV2PlusWrapper));
-
-        // Configure coordinator
-        // vrfCoordinator.setLINKAndLINKNativeFeed(address(0), address(0));
-        vrfCoordinator.setConfig(
-            0, // minRequestConfirmations
-            2_500_000, // maxGasLimit
-            1, // stalenessSeconds
-            50_000, // gasAfterPaymentCalculation
-            50000000000000000, // fallbackWeiPerUnitLink
-            0, // fulfillmentFlatFeeNativePPM
-            0, // fulfillmentFlatFeeLinkDiscountPPM
-            0, // nativePremiumPercentage
-            0 // linkPremiumPercentage
-        );
 
         // Configure wrapper
         vrfV2PlusWrapper.setConfig(
@@ -71,19 +60,19 @@ contract WellOfReflectionTest is Test {
             0, // coordinatorNativePremiumPercentage
             0, // coordinatorLinkPremiumPercentage
             VRF_KEY_HASH,
-            10, // maxNumWords
+            1, // maxNumWords
             1, // stalenessSeconds
             50000000000000000, // fallbackWeiPerUnitLink
             0, // fulfillmentFlatFeeNativePPM
             0 // fulfillmentFlatFeeLinkDiscountPPM
         );
 
-        // Fund the wrapper subscription with native and LINK
+        // Fund the wrapper subscription with ETH
         vm.deal(address(this), 100 ether);
         vrfCoordinator.fundSubscriptionWithNative{value: 10 ether}(wrapperSubscriptionId);
 
         // Deploy WellOfReflection with the wrapper
-        usdc = new MockUSDC();
+        // usdc = new MockUSDC();
         wellOfReflection = new WellOfReflection(address(vrfV2PlusWrapper));
 
         visitor1 = makeAddr("visitor1");
@@ -97,30 +86,27 @@ contract WellOfReflectionTest is Test {
     }
 
     function test_makeOffering() public {
-        // Set gas price for VRF price calculation (3 gwei)
+        // Set gas price for VRF price calculation
         vm.txGasPrice(0.00033 gwei);
 
         uint256 wellId = wellOfReflection.currentWellId();
         uint256 offeringAmount = wellOfReflection.OFFERING_AMOUNT();
-        uint256 wellDepth = wellOfReflection.wellDepth(wellId);
-
-        // get ETH balance for visitor1
-        uint256 balanceBefore = visitor1.balance;
         bytes32 key = keccak256(abi.encodePacked(wellId, visitor1));
-        bool hasOffered = wellOfReflection.hasOffered(key);
 
-        console.log("balanceBefore", balanceBefore);
+        // Calculate VRF fee that visitor needs to pay
+        uint256 vrfFee = vrfV2PlusWrapper.calculateRequestPriceNative(100_000, 1);
+        uint256 totalAmount = offeringAmount + vrfFee;
 
         // Before the offering
-        assertEq(balanceBefore, ethAmount);
-        assertEq(hasOffered, false);
+        assertEq(visitor1.balance, ethAmount);
+        assertEq(wellOfReflection.hasOffered(key), false);
         assertEq(wellId, 0);
-        assertEq(wellDepth, 0);
+        assertEq(wellOfReflection.wellDepth(wellId), 0);
 
-        // make offering
+        // make offering (visitor pays offeringAmount + vrfFee)
         vm.recordLogs();
         vm.startPrank(visitor1);
-        wellOfReflection.makeOffering{value: offeringAmount}();
+        wellOfReflection.makeOffering{value: totalAmount}();
         vm.stopPrank();
 
         // Expecting the OfferingMade event
@@ -148,25 +134,23 @@ contract WellOfReflectionTest is Test {
 
         // After the offering
         assertEq(wellOfReflection.hasOffered(key), true);
-        assertEq(wellOfReflection.wellDepth(0), offeringAmount);
+        assertEq(wellOfReflection.wellDepth(wellId), offeringAmount);
 
         // Get the VRF cost that was paid
-        WellOfReflection.RequestStatus memory requestStatus = wellOfReflection.requests(requestIdFromEvent);
-        uint256 vrfCost = requestStatus.paid;
+        (uint256 vrfFeePaidByVisitor, bool fulfilled, uint256 randomWord) =
+            wellOfReflection.requests(requestIdFromEvent);
 
-        // Contract balance should be: offeringAmount - VRF request price
-        // Contract starts with 0, receives offeringAmount, then pays VRF cost
+        uint256 vrfCost = vrfFeePaidByVisitor;
+        assertEq(vrfCost, vrfFee);
+        assertEq(fulfilled, false);
+        assertEq(randomWord, 0);
+
         uint256 contractBalanceAfter = address(wellOfReflection).balance;
-        uint256 expectedBalance = offeringAmount - vrfCost;
+        uint256 expectedBalance = offeringAmount; // VRF fee is paid from the fee portion, offering remains
 
-        console.log("contractBalanceAfter", contractBalanceAfter);
-        console.log("offeringAmount", offeringAmount);
-        console.log("vrfCost", vrfCost);
-        console.log("expectedBalance", expectedBalance);
-
-        // Balance should equal offering amount minus VRF cost
-        assertEq(contractBalanceAfter, expectedBalance, "Contract balance should equal offering amount minus VRF cost");
-        assertEq(visitor1.balance, ethAmount - offeringAmount);
+        // Balance should equal offering amount (VRF fee was deducted from the fee portion)
+        assertEq(contractBalanceAfter, expectedBalance, "Contract balance should equal offering amount");
+        assertEq(visitor1.balance, ethAmount - totalAmount);
         assertEq(wellOfReflection.currentWellId(), 0);
     }
 }
