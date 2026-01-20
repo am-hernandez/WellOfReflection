@@ -103,7 +103,7 @@ contract WellOfReflectionTest is Test {
         // make offering (visitor pays offeringAmount + vrfFee)
         vm.recordLogs();
         vm.startPrank(visitor1);
-        wellOfReflection.makeOffering{value: totalAmount}();
+        wellOfReflection.makeOffering{value: totalAmount}(1);
         vm.stopPrank();
 
         // Expecting the OfferingMade event
@@ -170,7 +170,7 @@ contract WellOfReflectionTest is Test {
 
         vm.recordLogs();
         vm.startPrank(visitor);
-        wellOfReflection.makeOffering{value: totalAmount}();
+        wellOfReflection.makeOffering{value: totalAmount}(1);
         vm.stopPrank();
 
         // get request ID from event OfferingMade(wellId, visitorAddress, requestId);
