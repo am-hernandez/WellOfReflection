@@ -8,9 +8,9 @@ import {VRFV2PlusWrapperConsumerBase} from "@chainlink/vrf/dev/VRFV2PlusWrapperC
 /**
  * @title WellOfReflection
  * @notice
- * Accepts a fixed a fixed amount of ETH offering into a shared pool.
- * The pool may be returned to a participant based solely
- * on verifiable randomness via Chainlink VRF v2.5.
+ * Accepts a fixed ETH offering into a Well.
+ * The accumulated depth may be returned to a Visitor
+ * based solely on verifiable randomness via Chainlink VRF v2.5.
  */
 contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     uint16 public constant REQUEST_CONFIRMATIONS = 5;
@@ -89,6 +89,12 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     // =========================================================================
     //                             EXTERNAL FUNCTIONS
     // =========================================================================
+
+    /// @notice Makes an offering to the current Well and requests VRF randomness.
+    /// @param imprint Visitor-provided value used for reflection matching.
+    /// @custom:reverts InvalidOfferingPlusFeeAmount
+    /// @custom:reverts WellIsNotReadyToReceive
+    /// @custom:reverts AlreadyOffered
 
     function makeOffering(uint256 imprint) external payable onlyWhenWellIsReadyToReceive {
         uint256 vrfFee = _quoteVrfFee();
