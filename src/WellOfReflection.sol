@@ -191,7 +191,7 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
         uint256 wellId = context.wellId;
         uint256 imprint = context.imprint;
 
-        bool wellReflected = (randomWord % REFLECTION_MODULUS) == imprint;
+        bool wellReflected = (randomWord % REFLECTION_MODULUS) == imprint % REFLECTION_MODULUS;
         uint256 reflectionAmount = wellDepth[wellId];
 
         if (wellReflected) {

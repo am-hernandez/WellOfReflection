@@ -246,8 +246,9 @@ contract WellOfReflectionTest is Test {
         assertGt(afterFulfillment_randomWord, 0, "Random word should be set");
     }
 
-    ///@notice Test will override the random words to 1234567890
-    ///@notice and use the imprint 7890 because 1234567890 % 10000 = 7890
+    /// @notice Overrides the VRF random word to 1,234,567,890.
+    /// @notice Uses imprint 7,890, which satisfies
+    ///         randomWord % REFLECTION_MODULUS == imprint % REFLECTION_MODULUS.
     function test_receiveReflection() public {
         // Set gas price for VRF price calculation (3 gwei)
         vm.txGasPrice(0.00033 gwei);
