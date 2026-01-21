@@ -13,8 +13,11 @@ import {VRFV2PlusWrapperConsumerBase} from "@chainlink/vrf/dev/VRFV2PlusWrapperC
  * on verifiable randomness via Chainlink VRF v2.5.
  */
 contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
-    uint256 public constant OFFERING_AMOUNT = 3e15; // 0.003 ETHER
+    uint16 public constant REQUEST_CONFIRMATIONS = 5;
     uint32 public constant CALLBACK_GAS_LIMIT = 100_000;
+    uint32 public constant NUM_OF_WORDS = 1;
+    uint256 public constant OFFERING_AMOUNT = 3e15; // 0.003 ETHER
+    uint256 public constant REFLECTION_MODULUS = 10_000;
     uint256 public currentWellId = 0;
     bool public wellIsReadyToReceive = true;
     mapping(address => uint256) public attainableReflections;
@@ -148,7 +151,8 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
         bytes memory extraArgs = VRFV2PlusClient._argsToBytes(VRFV2PlusClient.ExtraArgsV1({nativePayment: true}));
 
         // request random words from Chainlink VRF
-        (uint256 requestId, uint256 reqPrice) = requestRandomnessPayInNative(CALLBACK_GAS_LIMIT, 5, 1, extraArgs);
+        (uint256 requestId, uint256 reqPrice) =
+            requestRandomnessPayInNative(CALLBACK_GAS_LIMIT, REQUEST_CONFIRMATIONS, NUM_OF_WORDS, extraArgs);
 
         // store the request ID, well ID, visitor's address, and imprint
         requestContext[requestId] = RequestContext({visitor: _visitor, wellId: _wellId, imprint: _imprint});
@@ -159,7 +163,7 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     }
 
     function _quoteVrfFee() internal view returns (uint256) {
-        return i_vrfV2PlusWrapper.calculateRequestPriceNative(CALLBACK_GAS_LIMIT, 1);
+        return i_vrfV2PlusWrapper.calculateRequestPriceNative(CALLBACK_GAS_LIMIT, NUM_OF_WORDS);
     }
 
     // =========================================================================
@@ -187,7 +191,7 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
         uint256 wellId = context.wellId;
         uint256 imprint = context.imprint;
 
-        bool wellReflected = (randomWord % 10_000) == imprint;
+        bool wellReflected = (randomWord % REFLECTION_MODULUS) == imprint;
         uint256 reflectionAmount = wellDepth[wellId];
 
         if (wellReflected) {
