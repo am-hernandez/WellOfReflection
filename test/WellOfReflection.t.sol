@@ -29,6 +29,10 @@ contract WellOfReflectionTest is Test {
     uint32 private constant COORDINATOR_GAS_OVERHEAD_NATIVE = 200_000;
     uint32 private constant COORDINATOR_GAS_OVERHEAD_LINK = 220_000;
 
+    // =========================================================================
+    //                                   SETUP
+    // =========================================================================
+
     function setUp() public {
         // Deploy mock LINK token and feed (needed by wrapper)
         linkToken = new MockLinkToken();
@@ -93,7 +97,7 @@ contract WellOfReflectionTest is Test {
     }
 
     // =========================================================================
-    //                               Helper Functions
+    //                                TEST HELPERS
     // =========================================================================
 
     /**
@@ -144,6 +148,10 @@ contract WellOfReflectionTest is Test {
 
         return logs;
     }
+
+    // =========================================================================
+    //                                   TESTS
+    // =========================================================================
 
     function test_makeOffering() public {
         uint256 wellId = wellOfReflection.currentWellId();
@@ -246,6 +254,82 @@ contract WellOfReflectionTest is Test {
         assertGt(afterFulfillment_randomWord, 0, "Random word should be set");
     }
 
+    function test_handlesManyVisitorsToSameWell() public {
+        uint256 numberOfVisitors = 5000; // higher number can slow tests
+
+        for (uint256 i; i < numberOfVisitors; i++) {
+            address visitor = address(uint160(uint256(keccak256(abi.encode("visitor", i)))));
+
+            uint256 totalAmount = wellOfReflection.OFFERING_AMOUNT() + wellOfReflection.quoteVrfFee();
+            vm.deal(visitor, totalAmount);
+
+            // All visitors use the same imprint to prevent reflection
+            uint256 imprint = 0;
+
+            OfferingLogs memory logs = makeOfferingAndParseLogs(visitor, imprint, totalAmount);
+
+            // Well should never be ready to receive after offering is made and before words are fulfilled
+            assertFalse(
+                wellOfReflection.wellIsReadyToReceive(),
+                "Well should not be ready to receive after offering is made and before words are fulfilled"
+            );
+
+            // All visitors use the same random word to prevent reflection
+            uint256 word = uint256(keccak256(abi.encode("word")));
+
+            uint256[] memory words = new uint256[](1);
+            words[0] = word;
+
+            vrfCoordinator.fulfillRandomWordsWithOverride(logs.coordinatorRequestId, address(vrfV2PlusWrapper), words);
+
+            // Well should always be ready to receive after words are fulfilled
+            assertTrue(
+                wellOfReflection.wellIsReadyToReceive(), "Well should be ready to receive after words are fulfilled"
+            );
+        }
+    }
+
+    function test_reflectAfterNumberOfOfferings() public {
+        uint256 N = 200;
+        uint256 modulus = wellOfReflection.REFLECTION_MODULUS();
+
+        address winner;
+        uint256 imprint;
+        uint256[] memory words = new uint256[](1);
+
+        for (uint256 i; i < N; i++) {
+            address visitor = address(uint160(uint256(keccak256(abi.encode("visitor", i)))));
+
+            uint256 totalAmount = wellOfReflection.OFFERING_AMOUNT() + wellOfReflection.quoteVrfFee();
+            vm.deal(visitor, totalAmount);
+
+            if (i == N - 1) {
+                // last iteration will match
+                words[0] = 1234567890;
+                imprint = 7890;
+            } else {
+                words[0] = uint256(keccak256(abi.encode("word", i)));
+                imprint = uint256(keccak256(abi.encode("imprint", i))) % modulus;
+            }
+
+            OfferingLogs memory logs = makeOfferingAndParseLogs(visitor, imprint, totalAmount);
+
+            vrfCoordinator.fulfillRandomWordsWithOverride(logs.coordinatorRequestId, address(vrfV2PlusWrapper), words);
+
+            if (wellOfReflection.attainableReflections(visitor) > 0) {
+                winner = visitor;
+            }
+
+            // Well should always be ready to receive after words are fulfilled
+            assertTrue(
+                wellOfReflection.wellIsReadyToReceive(), "Well should be ready to receive after words are fulfilled"
+            );
+        }
+
+        assertTrue(winner != address(0), "Winner not set");
+        assertGt(wellOfReflection.attainableReflections(winner), 0, "Winner should have attainable reflections");
+    }
+
     /// @notice Overrides the VRF random word to 1,234,567,890.
     /// @notice Uses imprint 7,890, which satisfies
     ///         randomWord % REFLECTION_MODULUS == imprint % REFLECTION_MODULUS.
@@ -312,5 +396,37 @@ contract WellOfReflectionTest is Test {
         assertEq(wellOfReflection.attainableReflections(visitor), 0);
         assertEq(wellOfReflection.currentWellId(), 1);
         assertEq(wellOfReflection.wellIsReadyToReceive(), true);
+    }
+
+    // =========================================================================
+    //                                  REVERTS
+    // =========================================================================
+
+    function test_RevertWhenWellNotReadyForMakeOffering() public {
+        vm.startPrank(visitor1);
+
+        uint256 totalAmount = wellOfReflection.OFFERING_AMOUNT() + wellOfReflection.quoteVrfFee();
+
+        console.log("totalAmount", totalAmount);
+
+        wellOfReflection.makeOffering{value: totalAmount}(1);
+        vm.stopPrank();
+
+        vm.startPrank(visitor2);
+
+        vm.expectRevert(WellOfReflection.WellIsNotReadyToReceive.selector);
+        wellOfReflection.makeOffering{value: totalAmount}(1);
+        vm.stopPrank();
+    }
+
+    function test_RevertWhenInsufficientValueForMakeOffering() public {
+        uint256 totalAmount = wellOfReflection.OFFERING_AMOUNT() + wellOfReflection.quoteVrfFee() - 1;
+
+        console.log("totalAmount", totalAmount);
+
+        vm.startPrank(visitor1);
+        vm.expectRevert(WellOfReflection.InvalidOfferingPlusFeeAmount.selector);
+        wellOfReflection.makeOffering{value: totalAmount}(1);
+        vm.stopPrank();
     }
 }

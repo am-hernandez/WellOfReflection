@@ -6,6 +6,7 @@ solc_version = "0.8.19"
 viaIR = true
 optimizer = true
 optimizer_runs = 200
+gas_limit = 100000000000  # high gas limit for long-running tests
 
 remappings = [
   "@forge-std/=lib/forge-std/src/",
