@@ -90,12 +90,13 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     //                             EXTERNAL FUNCTIONS
     // =========================================================================
 
-    /// @notice Makes an offering to the current Well and requests VRF randomness.
-    /// @param imprint Visitor-provided value used for reflection matching.
-    /// @custom:reverts InvalidOfferingPlusFeeAmount
-    /// @custom:reverts WellIsNotReadyToReceive
-    /// @custom:reverts AlreadyOffered
-
+    /**
+     * @notice Makes an offering to the current Well and requests VRF randomness.
+     * @param imprint Visitor-provided value used for reflection matching.
+     * @custom:reverts InvalidOfferingPlusFeeAmount
+     * @custom:reverts WellIsNotReadyToReceive
+     * @custom:reverts AlreadyOffered
+     */
     function makeOffering(uint256 imprint) external payable onlyWhenWellIsReadyToReceive {
         uint256 vrfFee = _quoteVrfFee();
         if (msg.value < OFFERING_AMOUNT + vrfFee) revert InvalidOfferingPlusFeeAmount();
@@ -130,6 +131,15 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
      */
     function receiveReflection() external {
         _finalizeReturn(payable(msg.sender));
+    }
+
+    /**
+     * @notice
+     * Quotes the VRF fee for the current request.
+     * @return The VRF fee
+     */
+    function quoteVrfFee() external view returns (uint256) {
+        return _quoteVrfFee();
     }
 
     // =========================================================================
