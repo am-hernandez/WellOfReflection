@@ -71,12 +71,6 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     error NothingToReceive();
 
     // =========================================================================
-    //                                CONSTRUCTOR
-    // =========================================================================
-
-    constructor(address _vrfV2PlusWrapper) VRFV2PlusWrapperConsumerBase(_vrfV2PlusWrapper) {}
-
-    // =========================================================================
     //                                 MODIFIERS
     // =========================================================================
 
@@ -84,6 +78,12 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
         _onlyWhenWellIsReadyToReceive();
         _;
     }
+
+    // =========================================================================
+    //                                CONSTRUCTOR
+    // =========================================================================
+
+    constructor(address _vrfV2PlusWrapper) VRFV2PlusWrapperConsumerBase(_vrfV2PlusWrapper) {}
 
     // =========================================================================
     //                             EXTERNAL FUNCTIONS
