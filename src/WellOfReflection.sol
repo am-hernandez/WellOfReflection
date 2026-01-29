@@ -66,7 +66,6 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
 
     error AlreadyOffered();
     error EthTransferFailed();
-    error FailedToCompleteOffering();
     error InvalidOfferingPlusFeeAmount();
     error WellIsNotReadyToReceive();
     error NothingToReceive();
