@@ -19,7 +19,7 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     uint256 public constant OFFERING_AMOUNT = 3e15; // 0.003 ETHER
     uint256 public constant REFLECTION_MODULUS = 10_000;
     uint256 public currentWellId = 0;
-    bool public wellIsReadyToReceive = true;
+    bool public wellIsReadyToReceive = false;
     mapping(address => uint256) public attainableReflections;
     mapping(bytes32 => bool) public hasOffered; /* visitorAddress + wellId --> hasOffered */
     mapping(uint256 => RequestStatus) public requests; /* requestId --> RequestStatus */
@@ -45,9 +45,9 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     //==========================================================================
     //                                   EVENTS
     //==========================================================================
+    event Received(address indexed sender, uint256 amount);
 
     event ReflectionReceived(address indexed recipient, uint256 amount);
-
     event RequestSent(uint256 indexed requestId, uint256 indexed wellId, address indexed visitor);
 
     event RequestFulfilled(
@@ -83,7 +83,13 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
     //                                CONSTRUCTOR
     // =========================================================================
 
-    constructor(address _vrfV2PlusWrapper) VRFV2PlusWrapperConsumerBase(_vrfV2PlusWrapper) {}
+    constructor(address _vrfV2PlusWrapper) VRFV2PlusWrapperConsumerBase(_vrfV2PlusWrapper) {
+        wellIsReadyToReceive = true;
+    }
+
+    receive() external payable {
+        emit Received(msg.sender, msg.value);
+    }
 
     // =========================================================================
     //                             EXTERNAL FUNCTIONS
@@ -187,8 +193,8 @@ contract WellOfReflection is VRFV2PlusWrapperConsumerBase {
 
     /**
      * @notice
-     * Fulfill the random words request and determine if the visitor wins.
-     * If they win, transfer the reflection amount to their address and reset the well depth.
+     * Fulfill the random words request and determine if the well reflects for this visitor.
+     * If the well reflects, transfer the reflection amount to the visitor's address and reset the well depth.
      * @param _requestId The request ID
      * @param _randomWords The random words
      */
